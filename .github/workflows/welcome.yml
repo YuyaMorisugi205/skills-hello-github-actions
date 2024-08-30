@@ -1,4 +1,4 @@
-name: konnitiwa
+name: Post konnitiwa
 on:
   pull_request:
     types: [opened]
