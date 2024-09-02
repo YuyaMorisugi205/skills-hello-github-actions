@@ -1,0 +1,111 @@
+
+name: Swift CI/CD
+
+on:
+  push:
+    branches:
+      - main  # プッシュがメインブランチに対してトリガーされる場合
+  pull_request:
+    branches:
+      - main  # プルリクエストがメインブランチに対してトリガーされる場合
+
+jobs:
+  build:　　＃コードのビルドとテストを行い、基本的なチェックを実施するジョブ
+    runs-on: macOS-latest
+
+    steps:
+      - name: Checkout code
+      ＃コードリポジトリをGithub Actionsのランナーにチェックアウトする
+        uses: actions/checkout@v3
+        #Githubで公開されているGithub Actionsを利用する際に使用する
+
+      - name: Set up Swift　
+      ＃Swiftのバージョンを指定してセットアップを行う
+        uses: apple/setup-swift@v2
+        with:
+          swift-version: '5.7'  # 使用するSwiftのバージョン
+       ＃usesの引数的なイメージで
+
+      - name: Install dependencies
+      ＃Swiftパッケージの依存関係を解決します
+        run: swift package resolve
+
+      - name: Build
+      ＃Swiftプロジェクトをビルドします。下記コマンドで、リリースモードでプロジェクトをビルドします
+        run: swift build --configuration release
+
+      - name: Run tests
+      ＃プロジェクトのユニットテストを実施する
+        run: swift test --verbose
+
+　＃ビルドされたアプリケーションをアーカイブし、Appstoreにアップロードするジョブ
+  build_app_store:
+    runs-on: macOS-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Swift
+        uses: apple/setup-swift@v2
+        with:
+          swift-version: '5.7'
+
+      - name: Install dependencies
+        run: swift package resolve
+			＃リリースビルドを作成して下記コマンドを使用してアーカイブ用のリリースビルドを作成する
+      - name: Build for release
+        run: swift build --configuration release
+
+      - name: Create an xcarchive
+        run: |
+          xcodebuild -workspace YourWorkspace.xcworkspace \
+                     #-workspace は、Xcodeプロジェクトがワークスペースで管理されている場合に指定
+                     -scheme YourScheme \
+                     #-scheme はビルド対象のスキームを指定します。
+                     -archivePath $PWD/build/YourApp.xcarchive \
+                     archive
+                     #-archivePath はアーカイブファイルを保存するパスを指定します。
+
+      - name: Export the .ipa file
+        run: |
+          xcodebuild -exportArchive \
+                     -archivePath $PWD/build/YourApp.xcarchive \
+                     -exportOptionsPlist ExportOptions.plist \
+                     -exportPath $PWD/build
+
+      - name: Upload to App Store
+        uses: apple/app-store-connect-upload@v1
+        with:
+          api-key-id: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          api-key-issuer-id: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER_ID }}
+          api-key-private-key: ${{ secrets.APP_STORE_CONNECT_API_KEY_PRIVATE_KEY }}
+          ipa-path: $PWD/build/YourApp.ipa
+　＃新しいリリース用のブランチを作成し、main ブランチに対するプルリクエストを自動的に作成するジョブです。このジョブは、build_app_store ジョブが成功した後に実行されます。
+  create_release_pr:
+    runs-on: macOS-latest
+    needs: build_app_store
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Create a release branch
+      ＃現在のmainブランチから新しいリリースブランチを作成してリモートリポジトリにプッシュ
+          git checkout -b release/$(date +%Y%m%d%H%M%S)
+          git push origin HEAD
+
+      - name: Create a Pull Request
+      ＃新しく作成したリリースブランチから main ブランチへのプルリクエストを作成
+        uses: peter-evans/create-pull-request@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          title: 'Release $(date +%Y-%m-%d %H:%M:%S)'
+          body: 'Automated release PR'
+          ＃title と body にはプルリクエストのタイトルと説明を設定します。
+          base: main
+          head: release/$(date +%Y%m%d%H%M%S)
+          ＃base と head にはそれぞれ、プルリクエストのベースブランチ（main）と比較するブランチ（新しく作成したリリースブランチ）を指定します。
